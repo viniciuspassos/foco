@@ -11,6 +11,12 @@ This repository is a small browser application for breaking a task into short, c
 - Show each step's completion and task progress. Let the user remove a completed task explicitly.
 - Do not use XP, points, or paid API calls.
 
+## Language
+
+- Write all repository documentation, code identifiers, comments, tests, commit messages, and user-facing interface text in English.
+- Write task inputs and generated step suggestions in English. Configure and check the browser model for English input and output.
+- Do not add Portuguese copy, identifiers, or documentation to this project.
+
 ## Code
 
 - Keep functions small and single-purpose (about 4–20 lines) and files under 500 lines. Split by responsibility.
