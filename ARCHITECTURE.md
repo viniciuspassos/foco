@@ -2,7 +2,7 @@
 
 ## Status and scope
 
-This document describes the agreed design. The application code has not yet been implemented in this repository.
+This document describes the implemented design.
 
 Foco is a small, English-language browser application for breaking one or more tasks into short, checkable steps. It does not use XP, points, paid API calls, accounts, or a backend.
 
@@ -16,7 +16,7 @@ Foco is a small, English-language browser application for breaking one or more t
 
 The current target is desktop Chrome on a MacBook M2 with 16 GB of memory. The installed Chrome has the Prompt API enabled and an on-device model ready. Runtime availability must still be checked because browser and device state can change.
 
-## Proposed source layout
+## Source layout
 
 ```text
 index.html
@@ -58,11 +58,11 @@ Task titles and notes are sent only to the on-device browser model during sugges
 
 ## Validation and delivery
 
-Behavior tests cover task creation, step completion, progress, removal, suggestion parsing, and unavailable or malformed AI responses. Browser checks cover creating a task, reviewing suggestions, completing it, and clearing it by reload. The project will document one `npm test` command, plus lint, type-check, formatting, and build commands once package scripts exist.
+Behavior tests cover task creation, updates, step completion, progress, removal, suggestion parsing, and unavailable AI responses. Browser checks cover creating a task, reviewing suggestions, completing it, and clearing it by reload. The project provides `npm test`, `npm run lint`, `npm run build`, and `npm run format:check`.
 
 A Vite production build produces static files for hosting. Development and AI testing should use localhost or a supported web origin; direct `file://` use is not assumed to support the Prompt API.
 
-## Decisions still requiring verification
+## Decisions requiring runtime verification
 
 - Test the actual English suggestion quality on representative tasks before settling the prompt and response format.
 - Confirm the Prompt API behavior on the final hosting origin and document its browser requirements.
