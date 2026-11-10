@@ -12,12 +12,18 @@ import {
   type FocusTask,
 } from "./tasks";
 import { getBrowserSuggestionProvider } from "./suggestions";
+import { redrawWithFormDrafts } from "./form-drafts";
+
+interface TaskSuggestions {
+  pending: boolean;
+  steps: string[];
+  message: string;
+}
 
 interface AppState {
   tasks: FocusTask[];
   editingTaskId: string | null;
-  suggestedSteps: string[];
-  statusMessage: string;
+  suggestionsByTask: Map<string, TaskSuggestions>;
 }
 
 const application = findApplicationContainer();
@@ -25,8 +31,7 @@ const suggestionProvider = getBrowserSuggestionProvider();
 const state: AppState = {
   tasks: [],
   editingTaskId: null,
-  suggestedSteps: [],
-  statusMessage: "",
+  suggestionsByTask: new Map(),
 };
 
 application.addEventListener("click", handleClick);
@@ -49,8 +54,10 @@ function handleClick(event: MouseEvent): void {
       actionElement.dataset.taskId,
       actionElement.dataset.stepId,
     );
-  if (action === "suggest-steps") void suggestSteps();
-  if (action === "discard-suggestions") discardSuggestions();
+  if (action === "suggest-steps")
+    void suggestSteps(actionElement.dataset.taskId);
+  if (action === "discard-suggestions")
+    discardSuggestions(actionElement.dataset.taskId);
 }
 
 function handleSubmit(event: SubmitEvent): void {
@@ -70,10 +77,12 @@ function saveTask(form: HTMLFormElement): void {
       ? createTask(title, note, createIdentifier)
       : editExistingTask(title, note);
   if (task === null) return;
+  state.suggestionsByTask.delete(task.id);
   state.tasks =
     state.editingTaskId === null
       ? [task, ...state.tasks]
       : replaceTask(state.tasks, task);
+  form.reset();
   resetEditor();
 }
 
@@ -87,6 +96,7 @@ function addManualStep(form: HTMLFormElement): void {
   const taskId = form.dataset.taskId;
   if (stepText === null || taskId === undefined) return;
   updateTaskSteps(taskId, (task) => addStep(task, stepText, createIdentifier));
+  form.reset();
   renderApplication();
 }
 
@@ -105,40 +115,38 @@ function acceptSuggestions(form: HTMLFormElement): void {
       task,
     ),
   );
-  state.suggestedSteps = [];
+  state.suggestionsByTask.delete(taskId);
   renderApplication();
 }
 
-async function suggestSteps(): Promise<void> {
-  const activeTask = getActiveTask();
-  if (activeTask === null || suggestionProvider === null) {
-    state.statusMessage =
-      "Local AI suggestions are unavailable in this browser.";
-    renderApplication();
-    return;
-  }
-  state.statusMessage = "Creating suggestions locally…";
+async function suggestSteps(taskId: string | undefined): Promise<void> {
+  const task = state.tasks.find((item) => item.id === taskId);
+  if (task === undefined || suggestionProvider === null) return;
+  const previous = state.suggestionsByTask.get(task.id);
+  if (previous?.pending || previous?.steps.length) return;
+  const request: TaskSuggestions = {
+    pending: true,
+    steps: [],
+    message: "Preparing local AI suggestions…",
+  };
+  state.suggestionsByTask.set(task.id, request);
   renderApplication();
   try {
-    state.suggestedSteps = await suggestionProvider.suggest(
-      activeTask.title,
-      activeTask.note,
-    );
-    state.statusMessage =
-      state.suggestedSteps.length === 0
+    request.steps = await suggestionProvider.suggest(task.title, task.note);
+    request.message =
+      request.steps.length === 0
         ? "No usable suggestions were returned. Add a step manually."
         : "Review the suggested steps before adding them.";
   } catch (error: unknown) {
-    state.statusMessage =
+    request.message =
       error instanceof Error ? error.message : "Could not create suggestions.";
   }
-  renderApplication();
+  request.pending = false;
+  if (state.suggestionsByTask.get(task.id) === request) renderApplication();
 }
 
 function beginTaskEdit(taskId: string | undefined): void {
   state.editingTaskId = taskId ?? null;
-  state.suggestedSteps = [];
-  state.statusMessage = "";
   renderApplication();
 }
 
@@ -146,7 +154,7 @@ function removeSelectedTask(taskId: string | undefined): void {
   if (taskId === undefined) return;
   state.tasks = removeTask(state.tasks, taskId);
   if (state.editingTaskId === taskId) state.editingTaskId = null;
-  state.suggestedSteps = [];
+  state.suggestionsByTask.delete(taskId);
   renderApplication();
 }
 
@@ -169,20 +177,13 @@ function updateTaskSteps(
 
 function resetEditor(): void {
   state.editingTaskId = null;
-  state.suggestedSteps = [];
-  state.statusMessage = "";
   renderApplication();
 }
 
-function discardSuggestions(): void {
-  state.suggestedSteps = [];
-  state.statusMessage = "";
+function discardSuggestions(taskId: string | undefined): void {
+  if (taskId === undefined) return;
+  state.suggestionsByTask.delete(taskId);
   renderApplication();
-}
-
-function getActiveTask(): FocusTask | null {
-  if (state.editingTaskId === null) return state.tasks[0] ?? null;
-  return state.tasks.find((task) => task.id === state.editingTaskId) ?? null;
 }
 
 function readRequiredField(form: HTMLFormElement, name: string): string | null {
@@ -214,7 +215,10 @@ function findApplicationContainer(): HTMLElement {
 }
 
 function renderApplication(): void {
-  application.innerHTML = `<div class="shell">${renderHeader()}${renderTaskEditor()}${renderTaskList()}</div>`;
+  redrawWithFormDrafts(
+    application,
+    `<div class="shell">${renderHeader()}${renderTaskEditor()}${renderTaskList()}</div>`,
+  );
 }
 
 function renderHeader(): string {
@@ -228,7 +232,7 @@ function renderHeader(): string {
 function renderTaskEditor(): string {
   const task = state.tasks.find((item) => item.id === state.editingTaskId);
   const buttonText = task === undefined ? "Add task" : "Save task";
-  return `<section class="editor"><div><p class="eyebrow">${task === undefined ? "Start here" : "Edit task"}</p><h2>${task === undefined ? "What needs your attention?" : "Make the task clear."}</h2></div><form data-form="task" class="task-form"><label>Task<input name="title" maxlength="100" required value="${escapeHtml(task?.title ?? "")}" placeholder="e.g. Build the billing feature"></label><label>Context <span>(optional)</span><textarea name="note" rows="2" maxlength="240" placeholder="What matters for this task?">${escapeHtml(task?.note ?? "")}</textarea></label><div class="form-actions">${task === undefined ? "" : '<button class="secondary-button" type="button" data-action="cancel-edit">Cancel</button>'}<button class="primary-button" type="submit">${buttonText}</button></div></form></section>`;
+  return `<section class="editor"><div><p class="eyebrow">${task === undefined ? "Start here" : "Edit task"}</p><h2>${task === undefined ? "What needs your attention?" : "Make the task clear."}</h2></div><form data-form="task" data-task-id="${task?.id ?? ""}" class="task-form"><label>Task<input name="title" maxlength="100" required value="${escapeHtml(task?.title ?? "")}" placeholder="e.g. Build the billing feature"></label><label>Context <span>(optional)</span><textarea name="note" rows="2" maxlength="240" placeholder="What matters for this task?">${escapeHtml(task?.note ?? "")}</textarea></label><div class="form-actions">${task === undefined ? "" : '<button class="secondary-button" type="button" data-action="cancel-edit">Cancel</button>'}<button class="primary-button" type="submit">${buttonText}</button></div></form></section>`;
 }
 
 function renderTaskList(): string {
@@ -239,8 +243,7 @@ function renderTaskList(): string {
 
 function renderTaskCard(task: FocusTask): string {
   const progress = taskProgress(task);
-  const active = getActiveTask()?.id === task.id;
-  return `<article class="task-card ${isCompleted(task) ? "completed" : ""}"><div class="task-heading"><div><p class="task-status">${isCompleted(task) ? "Completed" : `${progress.completed} of ${progress.total} complete`}</p><h2>${escapeHtml(task.title)}</h2>${task.note ? `<p class="task-note">${escapeHtml(task.note)}</p>` : ""}</div><div class="task-actions"><button class="text-button" data-action="edit-task" data-task-id="${task.id}">Edit</button><button class="text-button danger" data-action="remove-task" data-task-id="${task.id}">Remove</button></div></div><div class="progress-track" aria-label="${progress.percent}% complete"><span style="width:${progress.percent}%"></span></div>${renderSteps(task)}${active ? renderSuggestionPanel(task) : ""}<form class="step-form" data-form="step" data-task-id="${task.id}"><input name="step" maxlength="120" required placeholder="Add a step manually"><button aria-label="Add step" class="add-button" type="submit">+</button></form></article>`;
+  return `<article class="task-card ${isCompleted(task) ? "completed" : ""}"><div class="task-heading"><div><p class="task-status">${isCompleted(task) ? "Completed" : `${progress.completed} of ${progress.total} complete`}</p><h2>${escapeHtml(task.title)}</h2>${task.note ? `<p class="task-note">${escapeHtml(task.note)}</p>` : ""}</div><div class="task-actions"><button class="text-button" data-action="edit-task" data-task-id="${task.id}">Edit</button><button class="text-button danger" data-action="remove-task" data-task-id="${task.id}">Remove</button></div></div><div class="progress-track" aria-label="${progress.percent}% complete"><span style="width:${progress.percent}%"></span></div>${renderSteps(task)}${renderSuggestionPanel(task)}<form class="step-form" data-form="step" data-task-id="${task.id}"><input name="step" maxlength="120" required placeholder="Add a step manually"><button aria-label="Add step" class="add-button" type="submit">+</button></form></article>`;
 }
 
 function renderSteps(task: FocusTask): string {
@@ -251,16 +254,17 @@ function renderSteps(task: FocusTask): string {
 
 function renderSuggestionPanel(task: FocusTask): string {
   const unavailable = suggestionProvider === null;
-  const suggestionFields = state.suggestedSteps
+  const suggestions = state.suggestionsByTask.get(task.id);
+  const suggestionFields = (suggestions?.steps ?? [])
     .map(
       (step) =>
         `<input name="suggestion" maxlength="120" value="${escapeHtml(step)}">`,
     )
     .join("");
   const draft = suggestionFields
-    ? `<form class="suggestion-draft" data-form="suggestions" data-task-id="${task.id}"><p>Review and edit before adding.</p>${suggestionFields}<div><button class="secondary-button" type="button" data-action="discard-suggestions">Discard</button><button class="primary-button" type="submit">Add suggestions</button></div></form>`
+    ? `<form class="suggestion-draft" data-form="suggestions" data-task-id="${task.id}"><p>Review and edit before adding.</p>${suggestionFields}<div><button class="secondary-button" type="button" data-action="discard-suggestions" data-task-id="${task.id}">Discard</button><button class="primary-button" type="submit">Add suggestions</button></div></form>`
     : "";
-  return `<section class="suggestions"><div class="suggestion-heading"><div><p class="eyebrow">Local AI</p><h3>Need a starting point?</h3></div><button class="secondary-button" data-action="suggest-steps" ${unavailable ? "disabled" : ""}>Suggest steps</button></div>${state.statusMessage ? `<p class="status-message">${escapeHtml(state.statusMessage)}</p>` : ""}${draft}</section>`;
+  return `<section class="suggestions"><div class="suggestion-heading"><div><p class="eyebrow">Local AI</p><h3>Need a starting point?</h3></div><button class="secondary-button" data-action="suggest-steps" data-task-id="${task.id}" ${unavailable || suggestions?.pending || suggestionFields ? "disabled" : ""}>Suggest steps</button></div>${suggestions?.message || unavailable ? `<p class="status-message" role="status">${escapeHtml(suggestions?.message ?? "Local AI suggestions are unavailable in this browser.")}</p>` : ""}${draft}</section>`;
 }
 
 function escapeHtml(value: string): string {

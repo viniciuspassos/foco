@@ -3,6 +3,7 @@ export type BrowserModelAvailability =
 
 export interface PromptSession {
   prompt(request: string): Promise<string>;
+  destroy?(): void;
 }
 
 export interface PromptModel {
@@ -19,12 +20,16 @@ export class BrowserSuggestionProvider implements SuggestionProvider {
 
   async suggest(title: string, note: string): Promise<string[]> {
     const availability = await this.promptModel.availability();
-    if (availability !== "available")
-      throw new Error(suggestionError(availability));
+    if (availability === "unavailable")
+      throw new Error("Local AI suggestions are unavailable in this browser.");
     const session = await this.promptModel.create();
-    return parseSuggestedSteps(
-      await session.prompt(buildSuggestionPrompt(title, note)),
-    );
+    try {
+      return parseSuggestedSteps(
+        await session.prompt(buildSuggestionPrompt(title, note)),
+      );
+    } finally {
+      session.destroy?.();
+    }
   }
 }
 
@@ -52,14 +57,6 @@ function cleanStep(line: string): string {
 
 function isValidStep(step: string): boolean {
   return step.length > 2 && step.length <= 120;
-}
-
-function suggestionError(availability: BrowserModelAvailability): string {
-  if (availability === "downloadable")
-    return "Local AI is ready to download. Try again after Chrome finishes preparing it.";
-  if (availability === "downloading")
-    return "Local AI is downloading in Chrome. Try again in a moment.";
-  return "Local AI suggestions are unavailable in this browser.";
 }
 
 declare global {
